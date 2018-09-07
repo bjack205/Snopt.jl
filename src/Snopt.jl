@@ -137,7 +137,7 @@ const usrfun = cfunction(objcon_wrapper, Void, (Ptr{Cint}, Ref{Cint}, Ptr{Cdoubl
 
 # main call to snopt
 function snopt(fun, x0, lb, ub, options;
-               printfile = "snopt-print.out", sumfile = "snopt-summary.out")
+               printfile = "snopt-print.out", sumfile = "snopt-summary.out", start=0)
 
     # call function
     res = fun(x0)
@@ -155,7 +155,8 @@ function snopt(fun, x0, lb, ub, options;
 
 
     # setup
-    Start = 0  # cold start  # TODO: allow warm starts
+    start_dict = Dict(:warm=>2, :cold=>0, 0=>0, 1=>1, 2=>2)
+    Start = start_dict[start]
     nF = 1 + length(c) + length(ceq)  # 1 objective + constraints
     n = length(x0)  # number of design variables
     ObjAdd = 0.0  # no constant term added to objective (user can add themselves if desired)
