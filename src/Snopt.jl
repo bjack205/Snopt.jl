@@ -203,7 +203,7 @@ function snopt(fun, x0, lb, ub, options;
     # Fnames = ["TODOTODO"]
 
     # starting info
-    x = x0
+    x = copy(x0)
     xstate = zeros(n)
     xmul = zeros(n)
     F = zeros(nF)
