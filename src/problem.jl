@@ -4,7 +4,7 @@ function convertInf!(A::VecOrMat{Float64},infbnd=1.1e20)
     return nothing
 end
 
-function get_jacobian_values(jac::VecOrMat,inds::Vector{Int})
+function get_jacobian_values(jac::Union{Vector,Matrix,SparseMatrixCSC},inds::Vector{Int})
     if ndims(jac) == 1
         return jac
     else
@@ -73,35 +73,44 @@ function createProblem(fun, x0, lb, ub, iI=Int[], jI=Int[], iE=Int[], jE=Int[])
             end
         end
 
-        # Convert to indices
-        @show iI, jI
-        c_inds = sub2ind((mI,n),iI,jI)
-        ceq_inds = sub2ind((mE,n),iE,jE)
-        lenG_c = length(c_inds)
-        lenG_ceq = length(ceq_inds)
     end
     if dense_jacobian
         # Assume Dense Jacobian if not provided
         lenG = nF*n
         iGfun = Array{Int32}(lenG)
         jGvar = Array{Int32}(lenG)
-        k = 1
-        for i = 1:nF
-            for j = 1:n
+        iGfun[1:n] = 1
+        jGvar[1:n] = 1:n
+        k = n+1
+        for j = 1:n
+            for i = 2:nF
                 iGfun[k] = i
                 jGvar[k] = j
                 k += 1
             end
         end
+
+        # Generate linear indices
+        lenG_c = n*mI
+        lenG_ceq = n*mE
+        c_inds = collect(1:lenG_c)
+        ceq_inds = collect(1:lenG_ceq)
     else
         iJ,jJ = ones(n), 1:n  # Assume objective gradient is dense
 
+        # Convert to indices
+        c_inds = sub2ind((mI,n),iI,jI)
+        ceq_inds = sub2ind((mE,n),iE,jE)
+        lenG_c = length(c_inds)
+        lenG_ceq = length(ceq_inds)
+
         # Combine row,col sets to get structure for combined jacobian
-        @show iG = [iJ; 1+iI; 1+lenG_c+iE] # Shift rows when stacking vertically
+        iG = [iJ; 1+iI; 1+lenG_c+iE] # Shift rows when stacking vertically
         jG = [jJ; jI; jE]
         iGfun = convert.(Int32,iG)
         jGvar = convert.(Int32,jG)
         lenG = length(iG)
+
     end
 
     # bound constriaints
@@ -118,8 +127,13 @@ function createProblem(fun, x0, lb, ub, iI=Int[], jI=Int[], iE=Int[], jE=Int[])
 
     # Pre-allocate arrays
     F = zeros(nF)
-    G = zeros(lenG)
+    if gradprovided
+        G = zeros(lenG)
+    else
+        G = Float64[]
+    end
 
+    # Auto-gen the user defined function
     function usrfun(x)
         res = fun(x)
         if length(res) == 3
@@ -150,21 +164,22 @@ function createProblem(fun, x0, lb, ub, iI=Int[], jI=Int[], iE=Int[], jE=Int[])
 
             # Constraint Jacobians
             jac_c = get_jacobian_values(gc,c_inds)
-            jac_ceq = get_jacobian_values(gceq,c_inds)
+            jac_ceq = get_jacobian_values(gceq,ceq_inds)
 
-            @show lenG_c, lenG_ceq, lenG
             G[n+(1:lenG_c)] = jac_c
             if lenG_ceq > 0
                 G[n+nG_c+(1:nG_ceq)] = jac_ceq
             end
         end
-        return F,G
+        return F,G,fail
     end # usrfun
 
     return SnoptProblem(n,m,iGfun,jGvar,xlow,xupp,Flow,Fupp,usrfun)
 end
 
 mutable struct SnoptProblem
+    x::Vector{Float64}
+
     n::Int  # Num vars
     m::Int  # Num cons
 
@@ -185,11 +200,12 @@ mutable struct SnoptProblem
     usrfun::Function  # F(x) form for Snopt
 
     function SnoptProblem(n,m,iGfun,jGvar,xlow,xupp,Flow,Fupp,usrfun,objRow=1)
+        x0 = zeros(n)
         nF = 1 + m  # 1 objective + constraints
         lenG = length(iGfun)
         neG = lenG
         @assert length(jGvar) == lenG
 
-        new(n,m,nF,lenG,neG,objRow,iGfun,jGvar,xlow,xupp,Flow,Fupp,usrfun)
+        new(x0,n,m,nF,lenG,neG,objRow,iGfun,jGvar,xlow,xupp,Flow,Fupp,usrfun)
     end
 end

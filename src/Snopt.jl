@@ -1,6 +1,11 @@
 module Snopt
 
-export snopt
+include("problem.jl")
+
+export
+    snopt,
+    createProblem,
+    SnoptProblem
 
 const snoptlib = joinpath(dirname(@__FILE__), "../deps/src/libsnopt")
 
@@ -62,58 +67,20 @@ function objcon_wrapper(status_::Ptr{Int32}, n::Int32, x_::Ptr{Cdouble},
     end
     # x = unsafe_load(x_)  # TODO: test this
 
-    # call function
-    res = objcon(x)
-    if length(res) == 3
-        J, c, fail = res
-        ceq = Float64[]
-        gradprovided = false
-    elseif length(res) == 4
-        J, c, ceq, fail = res
-        gradprovided = false
-    elseif length(res) == 5
-        J, c, gJ, gc, fail = res
-        ceq = Float64[]
-        gradprovided = true
-    else
-        J, c, ceq, gJ, gc, gceq, fail = res
-        gradprovided = true
-    end
+    # Call the custom function
+    F,G,fail = objcon(x)
 
     # copy obj and con values into C pointer
-    unsafe_store!(f_, J, 1)
-    for i = 2 : nF - length(ceq)
-        unsafe_store!(f_, c[i-1], i)
-    end
-    if !isempty(ceq)
-        for i = nF - length(ceq) + 1 : nF
-            unsafe_store!(f_, ceq[i-length(c)-1], i)
-        end
+    for i = 1:nF
+        unsafe_store!(f_, F[i], i)
     end
 
-    # gradients  TODO: separate gradient computation in interface?
-    if needG > 0 && gradprovided
-
-        for j = 1:n
-            # gradients of f
-            unsafe_store!(G_, gJ[j], j)
-        end
-
-        k = n+1
-        for i = 2 : nF - length(ceq)
-            for j = 1:n
-                unsafe_store!(G_, gc[i-1, j], k)
-                k += 1
-            end
-        end
-        for i = nF - length(ceq) + 1 : nF
-            for j = 1:n
-                unsafe_store!(G_, gceq[i-length(c)-1, j], k)
-                k += 1
-            end
+    # gradients
+    if needG > 0 && ~isempty(G)
+        for i = 1:lenG
+            unsafe_store!(G_,G[i],i)
         end
     end
-
 
     # check if solutions fails
     if fail
@@ -135,21 +102,32 @@ const usrfun = cfunction(objcon_wrapper, Void, (Ptr{Cint}, Ref{Cint}, Ptr{Cdoubl
 
 
 
+
+
 # main call to snopt
-function snopt(fun, x0, lb, ub, options;
-               printfile = "snopt-print.out", sumfile = "snopt-summary.out", start=0)
+function snopt(prob::SnoptProblem, options;
+               printfile = "snopt-print.out", sumfile = "snopt-summary.out", start=0, iG=[], jG=[])
 
     # call function
-    res = fun(x0)
-    if (length(res) == 3) || (length(res) == 5)
-        J, c, _ = res
-        ceq = Float64[]
-    else
-        J, c, ceq, _ = res
-    end
+    # res = fun(x0)
+    # if length(res) == 3
+    #    J, c, fail = res
+    #    ceq = Float64[]
+    #    gradprovided = false
+    # elseif length(res) == 4
+    #    J, c, ceq, fail = res
+    #    gradprovided = false
+    # elseif length(res) == 5
+    #    J, c, gJ, gc, fail = res
+    #    ceq = Float64[]
+    #    gradprovided = true
+    # else
+    #    J, c, ceq, gJ, gc, gceq, fail = res
+    #    gradprovided = true
+    # end
 
     # TODO: there is a probably a better way than to use a global
-    global objcon = fun
+    global objcon = prob.usrfun
 
     # TODO: set a timer
 
@@ -157,10 +135,13 @@ function snopt(fun, x0, lb, ub, options;
     # setup
     start_dict = Dict(:warm=>2, :cold=>0, 0=>0, 1=>1, 2=>2)
     Start = start_dict[start]
-    nF = 1 + length(c) + length(ceq)  # 1 objective + constraints
-    n = length(x0)  # number of design variables
+    nF = prob.nF
+    n = prob.n
+    # nF = 1 + length(c) + length(ceq)  # 1 objective + constraints
+    # n = length(x0)  # number of design variables
     ObjAdd = 0.0  # no constant term added to objective (user can add themselves if desired)
-    ObjRow = 1  # objective is first thing returned, then constraints
+    ObjRow = prob.objRow
+    # ObjRow = 1  # objective is first thing returned, then constraints
 
     # linear constraints (none for now)
     iAfun = Int32[1]
@@ -169,29 +150,44 @@ function snopt(fun, x0, lb, ub, options;
     lenA = 1
     neA = 0
 
-    # nonlinear constraints (assume dense jacobian for now)
-    lenG = nF*n
-    neG = lenG
-    iGfun = Array{Int32}(lenG)
-    jGvar = Array{Int32}(lenG)
-    k = 1
-    for i = 1:nF
-        for j = 1:n
-            iGfun[k] = i
-            jGvar[k] = j
-            k += 1
-        end
-    end
+    # # nonlinear constraints (assume dense jacobian for now)
+    # if isempty(iG)
+    #     lenG = nF*n
+    #     neG = lenG
+    #     iGfun = Array{Int32}(lenG)
+    #     jGvar = Array{Int32}(lenG)
+    #     k = 1
+    #     for i = 1:nF
+    #         for j = 1:n
+    #             iGfun[k] = i
+    #             jGvar[k] = j
+    #             k += 1
+    #         end
+    #     end
+    # else
+    #     lenG = length(iG)
+    #     neG = lenG
+    #     iGfun = convert.(Int32,iG)
+    #     jGvar = convert.(Int32,jG)
+    # end
+    lenG = prob.lenG
+    neG = prob.neG
+    iGfun = prob.iGfun
+    jGvar = prob.jGvar
 
-    # bound constriaints (no infinite bounds for now)
-    xlow = lb
-    xupp = ub
-    Flow = -1e20*ones(nF)  # TODO: check Infinite Bound size
-    Fupp = zeros(nF)  # TODO: currently c <= 0, but perhaps change
+    # # bound constriaints (no infinite bounds for now)
+    # xlow = lb
+    # xupp = ub
+    # Flow = -1e20*ones(nF)  # TODO: check Infinite Bound size
+    # Fupp = zeros(nF)  # TODO: currently c <= 0, but perhaps change
+    xlow = prob.xlow
+    xupp = prob.xupp
+    Flow = prob.Flow
+    Fupp = prob.Fupp
 
-    if !isempty(ceq) #equality constraints
-        Flow[nF - length(ceq) + 1 : nF] = 0.0
-    end
+    # if !isempty(ceq) #equality constraints
+    #     Flow[nF - length(ceq) + 1 : nF] = 0.0
+    # end
 
     # names
     Prob = "opt prob"  # problem name TODO: change later
@@ -203,7 +199,7 @@ function snopt(fun, x0, lb, ub, options;
     # Fnames = ["TODOTODO"]
 
     # starting info
-    x = copy(x0)
+    x = copy(prob.x)
     xstate = zeros(n)
     xmul = zeros(n)
     F = zeros(nF)
