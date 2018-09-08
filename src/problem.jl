@@ -12,7 +12,7 @@ function get_jacobian_values(jac::Union{Vector,Matrix,SparseMatrixCSC},inds::Vec
     end
 end
 
-function createProblem(fun, x0, lb, ub, iI=Int[], jI=Int[], iE=Int[], jE=Int[])
+function createProblem(fun, x0, lb, ub; iI=Int[], jI=Int[], iE=Int[], jE=Int[])
     # call function
     res = fun(x0)
     if length(res) == 3  # inequality only
