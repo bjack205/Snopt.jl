@@ -52,14 +52,21 @@ function createProblem(fun, x0, lb, ub; iI=Int[], jI=Int[], iE=Int[], jE=Int[])
     dense_jacobian = true
     if gradprovided
         # Check if sparsity structure was passed in
-        c_structure_provided = true
-        if isempty(iI) || isempty(jI)
-            c_structure_provided = false
+        if isempty(c)
+            c_structure_provided = true
+        else
+            if isempty(iI) || isempty(jI)
+                c_structure_provided = false
+            else
+                c_structure_provided = true
+            end
         end
         if isempty(ceq)
             ceq_structure_provided = true
         else
             if isempty(iE) || isempty(jE)
+                ceq_structure_provided = false
+            else
                 ceq_structure_provided = true
             end
         end
@@ -168,7 +175,7 @@ function createProblem(fun, x0, lb, ub; iI=Int[], jI=Int[], iE=Int[], jE=Int[])
 
             G[n+(1:lenG_c)] = jac_c
             if lenG_ceq > 0
-                G[n+nG_c+(1:nG_ceq)] = jac_ceq
+                G[n+lenG_c+(1:lenG_ceq)] = jac_ceq
             end
         end
         return F,G,fail
